@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useMemo, useCallback, useState } from 'react';
-import { useEditor, roundRect } from '@/hooks/useEditor';  // Add this import
+import { useEditor, roundRect, buildOutlineFilter, resolveOutlineColor } from '@/hooks/useEditor';  // Add this import
 import { SHAPES } from '@/constants/shapes';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
@@ -27,7 +27,8 @@ export function CanvasPreview() {
     drawingSize,
     drawingColor,
     drawings,
-    addDrawingPath 
+    addDrawingPath,
+    foregroundOutline
   } = useEditor();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const bgImageRef = useRef<HTMLImageElement | null>(null);
@@ -334,11 +335,27 @@ export function CanvasPreview() {
         const x = (canvas.width - newWidth) / 2;
         const y = (canvas.height - newHeight) / 2;
 
+        const outlineEnabled = foregroundOutline.enabled && foregroundOutline.width > 0;
+        const outlineColor = outlineEnabled ? resolveOutlineColor(foregroundOutline) : '';
+
         if (hasTransparentBackground || hasChangedBackground) {
           const offsetX = (canvas.width * foregroundPosition.x) / 100;
           const offsetY = (canvas.height * foregroundPosition.y) / 100;
+          // 先画描边（在主体背后），再画主体
+          if (outlineEnabled) {
+            ctx.save();
+            ctx.filter = buildOutlineFilter(foregroundOutline.width, outlineColor);
+            ctx.drawImage(fgImageRef.current, x + offsetX, y + offsetY, newWidth, newHeight);
+            ctx.restore();
+          }
           ctx.drawImage(fgImageRef.current, x + offsetX, y + offsetY, newWidth, newHeight);
         } else {
+          if (outlineEnabled) {
+            ctx.save();
+            ctx.filter = buildOutlineFilter(foregroundOutline.width, outlineColor);
+            ctx.drawImage(fgImageRef.current, x, y, newWidth, newHeight);
+            ctx.restore();
+          }
           ctx.drawImage(fgImageRef.current, x, y, newWidth, newHeight);
         }
 
@@ -371,7 +388,20 @@ export function CanvasPreview() {
           if (clone.flip.horizontal) ctx.scale(-1, 1);
           if (clone.flip.vertical) ctx.scale(1, -1);
           
-          // Draw image centered at origin
+          // 先画克隆描边（在主体背后），再画克隆主体
+          if (outlineEnabled) {
+            ctx.save();
+            ctx.filter = buildOutlineFilter(foregroundOutline.width, outlineColor);
+            ctx.drawImage(
+              fgImageRef.current!,
+              -newWidth / 2,
+              -newHeight / 2,
+              newWidth,
+              newHeight
+            );
+            ctx.restore();
+          }
+
           ctx.drawImage(
             fgImageRef.current!, 
             -newWidth / 2, 
@@ -386,7 +416,7 @@ export function CanvasPreview() {
       }
 
     });
-  }, [textSets, shapeSets, filterString, hasTransparentBackground, hasChangedBackground, foregroundPosition, clonedForegrounds, backgroundImages, backgroundColor, foregroundSize, drawings, currentPath]);
+  }, [textSets, shapeSets, filterString, hasTransparentBackground, hasChangedBackground, foregroundPosition, clonedForegrounds, backgroundImages, backgroundColor, foregroundSize, drawings, currentPath, foregroundOutline]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -409,7 +439,7 @@ export function CanvasPreview() {
     if (!hasTransparentBackground && !image.background) return;
     if (hasTransparentBackground && !image.foreground) return;
 
-    // Load appropriate image based on transparency state
+    // Load appropriate image based on transparency state for background size
     const img = new Image();
     img.src = hasTransparentBackground ? image.foreground! : image.background!;
     img.onload = () => {
@@ -417,14 +447,16 @@ export function CanvasPreview() {
       render();
     };
 
-    // Load foreground image if not in transparent mode
-    if (!hasTransparentBackground && image.foreground) {
+    // Load foreground image always if available, so it can be drawn with outline
+    if (image.foreground) {
       const fgImg = new Image();
       fgImg.src = image.foreground;
       fgImg.onload = () => {
         fgImageRef.current = fgImg;
         render();
       };
+    } else {
+      fgImageRef.current = null;
     }
   }, [image.background, image.foreground, hasTransparentBackground, foregroundPosition, foregroundSize]); // Add foregroundSize here
 
@@ -454,7 +486,8 @@ export function CanvasPreview() {
     clonedForegrounds, 
     hasChangedBackground, 
     backgroundColor,
-    foregroundSize  // Add foregroundSize here
+    foregroundSize,  // Add foregroundSize here
+    foregroundOutline
   ]);
 
   // Add a useEffect for window resize event
@@ -465,11 +498,6 @@ export function CanvasPreview() {
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, [render]);
-
-  // Modify the drawings effect to force immediate render
-  useEffect(() => {
-    render();
-  }, [drawings, currentPath, render]);
 
   // Add a separate effect for drawings
   useEffect(() => {

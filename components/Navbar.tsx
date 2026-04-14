@@ -4,7 +4,8 @@ import { useRef, useState, useEffect } from 'react';
 import Link from 'next/link';
 import { ChevronDown, Type, Shapes, ImageDown, LogIn, Loader2, Menu, LucideIcon, Github, Images, Pencil } from 'lucide-react'; // Add Github, Images, and Pencil import
 import { cn } from '@/lib/utils';
-import { User } from '@supabase/supabase-js';
+// import { User } from '@supabase/supabase-js';
+type User = any;
 import { AuthDialog } from './AuthDialog';
 import { supabase } from '@/lib/supabaseClient';
 import { useToast } from '@/hooks/use-toast';
@@ -262,7 +263,7 @@ export function Navbar() {
                         </div>
                       )}
                       <div className="w-8 h-8 relative rounded-full overflow-hidden ring-2 ring-white/10">
-                        {user.user_metadata.avatar_url ? (
+                        {user?.user_metadata?.avatar_url ? (
                           <img
                             src={user.user_metadata.avatar_url}
                             alt="User avatar"

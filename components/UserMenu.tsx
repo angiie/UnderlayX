@@ -1,6 +1,7 @@
 'use client';
 
-import { User } from '@supabase/supabase-js';
+// import { User } from '@supabase/supabase-js';
+type User = any;
 import {
   Tooltip,
   TooltipContent,

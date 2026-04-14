@@ -47,7 +47,7 @@ export default function RootLayout({
         />
         <meta httpEquiv="Content-Type" content="text/html; charset=utf-8" />
       </head>
-      <body className={`${inter.className} bg-[#0A0A0A] min-h-screen`}>
+      <body className={`${inter.className} bg-[#0A0A0A] min-h-screen`} suppressHydrationWarning>
         <PricingProvider>
           <ThemeProvider
             attribute="class"

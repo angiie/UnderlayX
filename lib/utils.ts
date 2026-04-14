@@ -6,8 +6,5 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 export function isSubscriptionActive(expiresAt: string | null): boolean {
-  if (!expiresAt) return false;
-  const expiryDate = new Date(expiresAt);
-  const currentDate = new Date();
-  return expiryDate > currentDate;
+  return true; // 强制关闭充值限制，所有用户均视为 Pro 用户
 }

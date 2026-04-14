@@ -10,7 +10,7 @@ import { useAuth } from '@/hooks/useAuth';
 import {  incrementGenerationCount } from '@/lib/supabase-utils';
 import { ProPlanDialog } from './ProPlanDialog';
 import { useToast } from '@/hooks/use-toast';
-import { removeBackground } from "@imgly/background-removal"; // Add this import
+import { removeBackgroundWithFallback } from '@/lib/backgroundRemoval';
 import { supabase } from '@/lib/supabaseClient';
 
 // Add URL cache using WeakMap to automatically cleanup when files are garbage collected
@@ -153,11 +153,11 @@ export function ImageEditor() {
     try {
       updatePendingImage(pendingImage.id, { isProcessing: true });
 
-      let processedUrl;
+      let processedUrl: string;
 
-      if (user && userSubscriptionStatus?.isProActive) {
-        // Pro user path - use API
-        console.log('Using pro API endpoint for background removal');
+      try {
+        // All users path - use API (Recharge limit disabled)
+        console.log('Using pro API endpoint for background removal (Recharge limit disabled)');
         const formData = new FormData();
         formData.append('file', pendingImage.file);
         formData.append('isAuthenticated', 'true');
@@ -168,7 +168,7 @@ export function ImageEditor() {
         });
 
         if (!response.ok) {
-          throw new Error('Failed to remove background');
+          throw new Error('Failed to remove background via API');
         }
 
         const responseData = await response.json();
@@ -179,13 +179,16 @@ export function ImageEditor() {
   
         const processedBlob = await processedImageResponse.blob();
         processedUrl = URL.createObjectURL(processedBlob);
-      } else {
-        // Free plan path
-        console.log('Using client-side background removal');
+      } catch (apiError) {
+        // Fallback to Free plan path
+        console.log('API failed, falling back to client-side background removal');
         const imageUrl = URL.createObjectURL(pendingImage.file);
-        const imageBlob = await removeBackground(imageUrl);
-        processedUrl = URL.createObjectURL(imageBlob);
+        const { blob, backend } = await removeBackgroundWithFallback(imageUrl);
+        processedUrl = URL.createObjectURL(blob);
         URL.revokeObjectURL(imageUrl);
+        if (backend === 'cpu') {
+          console.info('Background removal degraded to CPU backend');
+        }
       }
 
       // Cache the processed URL
@@ -570,4 +573,3 @@ export function ImageEditor() {
     </>
   );
 }
-

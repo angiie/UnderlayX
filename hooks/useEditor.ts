@@ -4,7 +4,7 @@ import { create } from 'zustand';
 import { convertHeicToJpeg } from '@/lib/image-utils';
 import { SHAPES } from '@/constants/shapes';
 import { uploadFile } from '@/lib/upload';
-import { removeBackground } from "@imgly/background-removal";
+import { removeBackgroundWithFallback } from '@/lib/backgroundRemoval';
 import { supabase } from '@/lib/supabaseClient'; // Add this import
 import { isSubscriptionActive } from '@/lib/utils';
 
@@ -104,6 +104,17 @@ interface DrawingPath {
   points: DrawingPoint[];
 }
 
+interface ForegroundOutline {
+  /** 是否启用主体描边（outline） */
+  enabled: boolean;
+  /** 描边线宽（像素） */
+  width: number;
+  /** 颜色来源：跟随主题 or 自定义 */
+  colorMode: 'theme' | 'custom';
+  /** 自定义颜色（hex/rgb/hsl 均可） */
+  color: string;
+}
+
 interface EditorState {
   image: {
     original: string | null;
@@ -138,6 +149,7 @@ interface EditorState {
   drawingTool: 'pencil';  // Remove eraser option
   drawingSize: number;
   drawingColor: string;
+  foregroundOutline: ForegroundOutline;
 }
 
 // Update the EditorActions interface to include flip in updateClonedForegroundTransform
@@ -180,6 +192,10 @@ interface EditorActions {
   addDrawingPath: (path: DrawingPoint[]) => void;
   clearDrawings: () => void;
   undoLastDrawing: () => void;
+  setForegroundOutlineEnabled: (enabled: boolean) => void;
+  setForegroundOutlineWidth: (width: number) => void;
+  setForegroundOutlineColorMode: (mode: 'theme' | 'custom') => void;
+  setForegroundOutlineColor: (color: string) => void;
 }
 
 // Modify the export of helper functions
@@ -195,6 +211,49 @@ export const roundRect = (ctx: CanvasRenderingContext2D, x: number, y: number, w
   ctx.lineTo(x, y + radius);
   ctx.quadraticCurveTo(x, y, x + radius, y);
   ctx.closePath();
+};
+
+/**
+ * 从 CSS 变量里读取颜色值，并标准化为可直接用于 canvas 的颜色字符串。
+ * 例如 --primary: "222.2 47.4% 11.2%" 会转换为 "hsl(222.2 47.4% 11.2%)"
+ */
+export const getCssVarColor = (varName: string, fallback: string): string => {
+  if (typeof window === 'undefined') return fallback;
+  const raw = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+  if (!raw) return fallback;
+  if (raw.startsWith('#') || raw.startsWith('rgb') || raw.startsWith('hsl')) return raw;
+  return `hsl(${raw})`;
+};
+
+/**
+ * 根据描边配置解析最终描边色（默认跟随主题 primary）。
+ */
+export const resolveOutlineColor = (outline: Pick<ForegroundOutline, 'colorMode' | 'color'>): string => {
+  if (outline.colorMode === 'custom') return outline.color;
+  return getCssVarColor('--primary', '#000000');
+};
+
+/**
+ * 生成用于 canvas ctx.filter 的 drop-shadow 串，以近似“描边”效果。
+ * 通过 8 个方向叠加（每个半径一圈）来控制线宽，性能比逐像素/多次 drawImage 更友好。
+ */
+export const buildOutlineFilter = (width: number, color: string): string => {
+  const w = Math.max(0, Math.round(width));
+  if (w <= 0) return 'none';
+
+  // Keep filter complexity constant to avoid UI freeze on large width values.
+  const d = w;
+  const diag = Math.max(1, Math.round(d * 0.7071));
+  return [
+    `drop-shadow(${d}px 0 0 ${color})`,
+    `drop-shadow(-${d}px 0 0 ${color})`,
+    `drop-shadow(0 ${d}px 0 ${color})`,
+    `drop-shadow(0 -${d}px 0 ${color})`,
+    `drop-shadow(${diag}px ${diag}px 0 ${color})`,
+    `drop-shadow(-${diag}px ${diag}px 0 ${color})`,
+    `drop-shadow(${diag}px -${diag}px 0 ${color})`,
+    `drop-shadow(-${diag}px -${diag}px 0 ${color})`,
+  ].join(' ');
 };
 
 const createCheckerboardPattern = (): HTMLCanvasElement => {
@@ -346,6 +405,12 @@ export const useEditor = create<EditorState & EditorActions>()((set, get) => ({
   drawingTool: 'pencil',  // Remove eraser option
   drawingSize: 20,  // Changed from 5 to 50
   drawingColor: '#FFFFFF',  // Changed from #000000 to #FFFFFF
+  foregroundOutline: {
+    enabled: false,
+    width: 8,
+    colorMode: 'theme',
+    color: '#FFFFFF'
+  },
 
   setProcessingMessage: (message) => set({ processingMessage: message }),
 
@@ -541,73 +606,24 @@ export const useEditor = create<EditorState & EditorActions>()((set, get) => ({
       set({ isProcessing: true });
 
       // Different processing based on authentication status and subscription
-      let foregroundUrl;
+      let foregroundUrl: string;
       
-      if (state?.isAuthenticated && state.userId) {  // Add userId check
-        // Check if subscription is active before using API
-        const profile = await supabase
-          .from('profiles')
-          .select('expires_at')
-          .eq('id', state.userId)  // Use userId from state
-          .single();
-
-        const isProActive = profile.data?.expires_at && isSubscriptionActive(profile.data.expires_at);
-        set({ isProSubscriptionActive: isProActive });
-
-        if (isProActive) {
-          try {
-            // Pro users with active subscription: Use API endpoint
-            const formData = new FormData();
-            formData.append('file', fileToUpload);
-            formData.append('isAuthenticated', 'true');
-    
-            const response = await fetch('/api/remove-background', {
-              method: 'POST',
-              body: formData
-            });
-    
-            const data = await response.json();
-    
-            if (!response.ok) {
-              throw new Error(data.error || 'Failed to remove background');
-            }
-    
-            // Fetch the processed image
-            const processedImageResponse = await fetch(data.url);
-            if (!processedImageResponse.ok) {
-              throw new Error('Failed to fetch processed image');
-            }
-    
-            const processedBlob = await processedImageResponse.blob();
-            foregroundUrl = URL.createObjectURL(processedBlob);
-          } catch (error) {
-            throw new Error('Failed to analyze image. Please try again.');
-          }
-        } else {
-          try {
-            // Expired subscription: Use client-side removal
-            const imageUrl = URL.createObjectURL(fileToUpload);
-            const imageBlob = await removeBackground(imageUrl);
-            foregroundUrl = URL.createObjectURL(imageBlob);
-            URL.revokeObjectURL(imageUrl);
-          } catch (error) {
-            throw new Error('Failed to analyze image. Please try with a different image or try again later.');
-          }
+      set({ isProSubscriptionActive: true });
+      try {
+        const imageUrl = URL.createObjectURL(fileToUpload);
+        const { blob, backend } = await removeBackgroundWithFallback(imageUrl);
+        foregroundUrl = URL.createObjectURL(blob);
+        URL.revokeObjectURL(imageUrl);
+        if (backend === 'cpu') {
+          console.info('Background removal degraded to CPU backend');
         }
-      } else {
-        try {
-          // Free plan: Use client-side removal
-          const imageUrl = URL.createObjectURL(fileToUpload);
-          const imageBlob = await removeBackground(imageUrl);
-          foregroundUrl = URL.createObjectURL(imageBlob);
-          URL.revokeObjectURL(imageUrl);
-        } catch (error) {
-          set({ 
-            processingMessage: 'Failed to analyze image. Please try with a different image.',
-            isProcessing: false 
-          });
-          throw new Error('Failed to analyze image. Please try with a different image.');
-        }
+      } catch (clientError) {
+        console.error("Client side background removal failed:", clientError);
+        set({ 
+          processingMessage: 'Failed to analyze image. Please try with a different image.',
+          isProcessing: false 
+        });
+        throw new Error('Failed to analyze image. Please try with a different image.');
       }
   
       set(state => ({
@@ -658,7 +674,8 @@ export const useEditor = create<EditorState & EditorActions>()((set, get) => ({
         hasChangedBackground,
         foregroundPosition,
         backgroundImages,
-        foregroundSize
+        foregroundSize,
+        foregroundOutline
       } = get();
 
       // Modified validation check to allow downloads with backgroundColor
@@ -907,8 +924,23 @@ export const useEditor = create<EditorState & EditorActions>()((set, get) => ({
         if (hasTransparentBackground || hasChangedBackground) {
           const offsetX = (canvas.width * foregroundPosition.x) / 100;
           const offsetY = (canvas.height * foregroundPosition.y) / 100;
+          // 4.1 先画描边（在主体背后），再画主体
+          if (foregroundOutline.enabled && foregroundOutline.width > 0) {
+            const outlineColor = resolveOutlineColor(foregroundOutline);
+            ctx.save();
+            ctx.filter = buildOutlineFilter(foregroundOutline.width, outlineColor);
+            ctx.drawImage(fgImg, x + offsetX, y + offsetY, newWidth, newHeight);
+            ctx.restore();
+          }
           ctx.drawImage(fgImg, x + offsetX, y + offsetY, newWidth, newHeight);
         } else {
+          if (foregroundOutline.enabled && foregroundOutline.width > 0) {
+            const outlineColor = resolveOutlineColor(foregroundOutline);
+            ctx.save();
+            ctx.filter = buildOutlineFilter(foregroundOutline.width, outlineColor);
+            ctx.drawImage(fgImg, x, y, newWidth, newHeight);
+            ctx.restore();
+          }
           ctx.drawImage(fgImg, x, y, newWidth, newHeight);
         }
 
@@ -940,6 +972,21 @@ export const useEditor = create<EditorState & EditorActions>()((set, get) => ({
           
           // Apply flip transformations
           ctx.scale(clone.flip.horizontal ? -1 : 1, clone.flip.vertical ? -1 : 1);
+
+          // 4.2 先画克隆描边（在克隆主体背后），再画克隆主体
+          if (foregroundOutline.enabled && foregroundOutline.width > 0) {
+            const outlineColor = resolveOutlineColor(foregroundOutline);
+            ctx.save();
+            ctx.filter = buildOutlineFilter(foregroundOutline.width, outlineColor);
+            ctx.drawImage(
+              fgImg, 
+              -newWidth / 2, 
+              -newHeight / 2, 
+              newWidth, 
+              newHeight
+            );
+            ctx.restore();
+          }
 
           // Draw image centered at origin
           ctx.drawImage(
@@ -1048,6 +1095,12 @@ export const useEditor = create<EditorState & EditorActions>()((set, get) => ({
       drawingTool: 'pencil',  // Remove eraser option
       drawingSize: 20,
       drawingColor: '#ffffff',
+      foregroundOutline: {
+        enabled: false,
+        width: 8,
+        colorMode: 'theme',
+        color: '#FFFFFF'
+      },
     };
   }),
 
@@ -1316,5 +1369,18 @@ export const useEditor = create<EditorState & EditorActions>()((set, get) => ({
       };
     });
   },
+
+  setForegroundOutlineEnabled: (enabled) => set((state) => ({
+    foregroundOutline: { ...state.foregroundOutline, enabled }
+  })),
+  setForegroundOutlineWidth: (width) => set((state) => ({
+    foregroundOutline: { ...state.foregroundOutline, width }
+  })),
+  setForegroundOutlineColorMode: (mode) => set((state) => ({
+    foregroundOutline: { ...state.foregroundOutline, colorMode: mode }
+  })),
+  setForegroundOutlineColor: (color) => set((state) => ({
+    foregroundOutline: { ...state.foregroundOutline, color }
+  })),
 
 }));

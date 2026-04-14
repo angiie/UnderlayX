@@ -1,5 +1,6 @@
 import { supabase } from './supabaseClient';
-import { User } from '@supabase/supabase-js';
+// import { User } from '@supabase/supabase-js';
+type User = any;
 
 interface UserProfile {
   id: string;
