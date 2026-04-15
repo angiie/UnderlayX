@@ -400,10 +400,10 @@ export function ImageEditor() {
                     <div className="space-y-3">
                       <div className="space-y-2">
                         {/* X Position */}
-                        <div>
-                          <div className="flex justify-between text-xs mb-1">
-                            <span>Position X</span>
-                            <span>{Math.round(backgroundImages.find(img => img.id === pendingImage.id)?.position.horizontal || 0)}%</span>
+                        <div className="space-y-2">
+                          <div className="flex justify-between items-center text-sm font-medium">
+                            <label>Horizontal Position</label>
+                            <span className="text-gray-600 dark:text-gray-400">{Math.round(backgroundImages.find(img => img.id === pendingImage.id)?.position.horizontal || 0)}%</span>
                           </div>
                           <Slider
                             value={[backgroundImages.find(img => img.id === pendingImage.id)?.position.horizontal || 0]}
@@ -417,16 +417,16 @@ export function ImageEditor() {
                             }
                             min={0}
                             max={100}
-                            step={1}
+                            step={0.1}
                             className="my-0.5"
                           />
                         </div>
 
                         {/* Y Position */}
-                        <div>
-                          <div className="flex justify-between text-xs mb-1">
-                            <span>Position Y</span>
-                            <span>{Math.round(backgroundImages.find(img => img.id === pendingImage.id)?.position.vertical || 0)}%</span>
+                        <div className="space-y-2">
+                          <div className="flex justify-between items-center text-sm font-medium">
+                            <label>Vertical Position</label>
+                            <span className="text-gray-600 dark:text-gray-400">{Math.round(backgroundImages.find(img => img.id === pendingImage.id)?.position.vertical || 0)}%</span>
                           </div>
                           <Slider
                             value={[backgroundImages.find(img => img.id === pendingImage.id)?.position.vertical || 0]}
@@ -440,16 +440,16 @@ export function ImageEditor() {
                             }
                             min={0}
                             max={100}
-                            step={1}
+                            step={0.1}
                             className="my-0.5"
                           />
                         </div>
 
                         {/* Scale */}
-                        <div>
-                          <div className="flex justify-between text-xs mb-1">
-                            <span>Scale</span>
-                            <span>{Math.round(backgroundImages.find(img => img.id === pendingImage.id)?.scale || 0)}%</span>
+                        <div className="space-y-2">
+                          <div className="flex justify-between items-center text-sm font-medium">
+                            <label>Scale</label>
+                            <span className="text-gray-600 dark:text-gray-400">{Math.round(backgroundImages.find(img => img.id === pendingImage.id)?.scale || 0)}%</span>
                           </div>
                           <Slider
                             value={[backgroundImages.find(img => img.id === pendingImage.id)?.scale || 0]}
@@ -464,10 +464,10 @@ export function ImageEditor() {
                         </div>
 
                         {/* Rotation */}
-                        <div>
-                          <div className="flex justify-between text-xs mb-1">
-                            <span>Rotation</span>
-                            <span>{Math.round(backgroundImages.find(img => img.id === pendingImage.id)?.rotation || 0)}°</span>
+                        <div className="space-y-2">
+                          <div className="flex justify-between items-center text-sm font-medium">
+                            <label>Rotation</label>
+                            <span className="text-gray-600 dark:text-gray-400">{Math.round(backgroundImages.find(img => img.id === pendingImage.id)?.rotation || 0)}°</span>
                           </div>
                           <Slider
                             value={[backgroundImages.find(img => img.id === pendingImage.id)?.rotation || 0]}
@@ -482,10 +482,10 @@ export function ImageEditor() {
                         </div>
 
                         {/* Opacity */}
-                        <div>
-                          <div className="flex justify-between text-xs mb-1">
-                            <span>Opacity</span>
-                            <span>{Math.round((backgroundImages.find(img => img.id === pendingImage.id)?.opacity || 0) * 100)}%</span>
+                        <div className="space-y-2">
+                          <div className="flex justify-between items-center text-sm font-medium">
+                            <label>Opacity</label>
+                            <span className="text-gray-600 dark:text-gray-400">{Math.round((backgroundImages.find(img => img.id === pendingImage.id)?.opacity || 0) * 100)}%</span>
                           </div>
                           <Slider
                             value={[(backgroundImages.find(img => img.id === pendingImage.id)?.opacity || 0) * 100]}
@@ -500,44 +500,42 @@ export function ImageEditor() {
                         </div>
                       </div>
 
-                      <div className="space-y-4 pt-2 border-t border-gray-200 dark:border-white/10">
+                      <div className="space-y-4 pt-4 border-t border-gray-200 dark:border-white/10">
                         <div className="flex items-center justify-between">
                           <h4 className="text-sm font-medium">Effects</h4>
                         </div>
 
                         {/* Glow Effect - Simplified */}
                         <div className="space-y-2">
-                          <div>
-                            <div className="flex justify-between text-xs mb-1">
-                              <span>Glow</span>
-                              <span>{Math.round(backgroundImages.find(img => img.id === pendingImage.id)?.glow.intensity || 0)}px</span>
-                            </div>
-                            <Slider
-                              value={[backgroundImages.find(img => img.id === pendingImage.id)?.glow.intensity || 0]}
-                              onValueChange={([value]) => {
-                                // Debounce the update to improve performance
-                                if (debounceTimeout.current) {
-                                  clearTimeout(debounceTimeout.current);
-                                }
-                                debounceTimeout.current = setTimeout(() => {
-                                  updateBackgroundImage(pendingImage.id, {
-                                    glow: { intensity: value }
-                                  });
-                                }, 16); // Approximately 1 frame at 60fps
-                              }}
-                              min={0}
-                              max={50}
-                              step={1}
-                              className="my-0.5"
-                            />
+                          <div className="flex justify-between items-center text-sm font-medium">
+                            <label>Glow</label>
+                            <span className="text-gray-600 dark:text-gray-400">{Math.round(backgroundImages.find(img => img.id === pendingImage.id)?.glow.intensity || 0)}px</span>
                           </div>
+                          <Slider
+                            value={[backgroundImages.find(img => img.id === pendingImage.id)?.glow.intensity || 0]}
+                            onValueChange={([value]) => {
+                              // Debounce the update to improve performance
+                              if (debounceTimeout.current) {
+                                clearTimeout(debounceTimeout.current);
+                              }
+                              debounceTimeout.current = setTimeout(() => {
+                                updateBackgroundImage(pendingImage.id, {
+                                  glow: { intensity: value }
+                                });
+                              }, 16); // Approximately 1 frame at 60fps
+                            }}
+                            min={0}
+                            max={50}
+                            step={1}
+                            className="my-0.5"
+                          />
                         </div>
 
                         {/* Border Radius */}
-                        <div>
-                          <div className="flex justify-between text-xs mb-1">
-                            <span>Border Radius</span>
-                            <span>{Math.round(backgroundImages.find(img => img.id === pendingImage.id)?.borderRadius || 0)}px</span>
+                        <div className="space-y-2">
+                          <div className="flex justify-between items-center text-sm font-medium">
+                            <label>Border Radius</label>
+                            <span className="text-gray-600 dark:text-gray-400">{Math.round(backgroundImages.find(img => img.id === pendingImage.id)?.borderRadius || 0)}px</span>
                           </div>
                           <Slider
                             value={[backgroundImages.find(img => img.id === pendingImage.id)?.borderRadius || 0]}

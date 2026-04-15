@@ -157,12 +157,10 @@ export function ShapeEditor() {
 
             {/* Position X */}
             <div className="space-y-2">
-              <Label asChild>
-                <div className="flex justify-between items-center text-sm text-gray-600 dark:text-gray-400">
-                  Horizontal Position
-                  <span>{shapeSet.position.horizontal}%</span>
-                </div>
-              </Label>
+              <div className="flex justify-between items-center text-sm font-medium">
+                <label>Horizontal Position</label>
+                <span className="text-gray-600 dark:text-gray-400">{Math.round(shapeSet.position.horizontal)}%</span>
+              </div>
               <Slider
                 min={0}
                 max={100}
@@ -174,12 +172,10 @@ export function ShapeEditor() {
 
             {/* Position Y */}
             <div className="space-y-2">
-              <Label asChild>
-                <div className="flex justify-between items-center text-sm text-gray-600 dark:text-gray-400">
-                  Vertical Position
-                  <span>{shapeSet.position.vertical}%</span>
-                </div>
-              </Label>
+              <div className="flex justify-between items-center text-sm font-medium">
+                <label>Vertical Position</label>
+                <span className="text-gray-600 dark:text-gray-400">{Math.round(shapeSet.position.vertical)}%</span>
+              </div>
               <Slider
                 min={0}
                 max={100}

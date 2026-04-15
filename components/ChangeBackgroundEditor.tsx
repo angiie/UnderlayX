@@ -121,7 +121,10 @@ export function ChangeBackgroundEditor() {
 
           {/* Position controls */}
           <div className="space-y-2">
-            <label className="text-sm font-medium">Horizontal Position</label>
+            <div className="flex justify-between items-center text-sm font-medium">
+              <label>Horizontal Position</label>
+              <span className="text-gray-600 dark:text-gray-400">{Math.round(foregroundPosition.x)}%</span>
+            </div>
             <Slider
               value={[foregroundPosition.x]}
               onValueChange={([value]) => updateForegroundPosition({ x: value, y: foregroundPosition.y })}
@@ -132,7 +135,10 @@ export function ChangeBackgroundEditor() {
           </div>
 
           <div className="space-y-2">
-            <label className="text-sm font-medium">Vertical Position</label>
+            <div className="flex justify-between items-center text-sm font-medium">
+              <label>Vertical Position</label>
+              <span className="text-gray-600 dark:text-gray-400">{Math.round(foregroundPosition.y)}%</span>
+            </div>
             <Slider
               value={[foregroundPosition.y]}
               onValueChange={([value]) => updateForegroundPosition({ x: foregroundPosition.x, y: value })}

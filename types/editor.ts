@@ -19,6 +19,8 @@ export interface TextSet {
   opacity: number;
   position: Position;
   rotation: number;
+  tiltX?: number; // Added for 3D tilt
+  tiltY?: number; // Added for 3D tilt
   glow?: GlowEffect;
 }
 

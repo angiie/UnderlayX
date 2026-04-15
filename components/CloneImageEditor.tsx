@@ -50,7 +50,10 @@ export function CloneImageEditor() {
             </div>
 
             <div className="space-y-2">
-              <label className="text-sm font-medium">Horizontal Position</label>
+              <div className="flex justify-between items-center text-sm font-medium">
+                <label>Horizontal Position</label>
+                <span className="text-gray-600 dark:text-gray-400">{Math.round(clone.position.x)}%</span>
+              </div>
               <Slider
                 value={[clone.position.x]}
                 onValueChange={([x]) => updateClonedForegroundTransform(clone.id, { 
@@ -63,7 +66,10 @@ export function CloneImageEditor() {
             </div>
 
             <div className="space-y-2">
-              <label className="text-sm font-medium">Vertical Position</label>
+              <div className="flex justify-between items-center text-sm font-medium">
+                <label>Vertical Position</label>
+                <span className="text-gray-600 dark:text-gray-400">{Math.round(clone.position.y)}%</span>
+              </div>
               <Slider
                 value={[clone.position.y]}
                 onValueChange={([y]) => updateClonedForegroundTransform(clone.id, { 
@@ -76,9 +82,12 @@ export function CloneImageEditor() {
             </div>
 
             <div className="space-y-2">
-              <label className="text-sm font-medium flex items-center gap-2">
-                <Expand className="w-4 h-4" /> Size
-              </label>
+              <div className="flex justify-between items-center text-sm font-medium">
+                <label className="flex items-center gap-2">
+                  <Expand className="w-4 h-4" /> Size
+                </label>
+                <span className="text-gray-600 dark:text-gray-400">{Math.round(clone.size)}%</span>
+              </div>
               <Slider
                 value={[clone.size]}
                 onValueChange={([size]) => updateClonedForegroundTransform(clone.id, { size })}
@@ -89,14 +98,46 @@ export function CloneImageEditor() {
             </div>
 
             <div className="space-y-2">
-              <label className="text-sm font-medium flex items-center gap-2">
-                <RotateCw className="w-4 h-4" /> Rotation
-              </label>
+              <div className="flex justify-between items-center text-sm font-medium">
+                <label className="flex items-center gap-2">
+                  <RotateCw className="w-4 h-4" /> Rotation
+                </label>
+                <span className="text-gray-600 dark:text-gray-400">{Math.round(clone.rotation)}°</span>
+              </div>
               <Slider
                 value={[clone.rotation]}
                 onValueChange={([rotation]) => updateClonedForegroundTransform(clone.id, { rotation })}
                 min={0}
                 max={360}
+                step={1}
+              />
+            </div>
+
+            {/* Add Tilt Controls */}
+            <div className="space-y-2">
+              <div className="flex justify-between items-center text-sm font-medium">
+                <label>Tilt X (3D)</label>
+                <span className="text-gray-600 dark:text-gray-400">{Math.round(clone.tiltX || 0)}°</span>
+              </div>
+              <Slider
+                value={[clone.tiltX || 0]}
+                onValueChange={([tiltX]) => updateClonedForegroundTransform(clone.id, { tiltX })}
+                min={-180}
+                max={180}
+                step={1}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex justify-between items-center text-sm font-medium">
+                <label>Tilt Y (3D)</label>
+                <span className="text-gray-600 dark:text-gray-400">{Math.round(clone.tiltY || 0)}°</span>
+              </div>
+              <Slider
+                value={[clone.tiltY || 0]}
+                onValueChange={([tiltY]) => updateClonedForegroundTransform(clone.id, { tiltY })}
+                min={-180}
+                max={180}
                 step={1}
               />
             </div>

@@ -17,6 +17,17 @@ import { useToast } from "@/hooks/use-toast";
 import { ProPlanDialog } from "./ProPlanDialog";
 import { supabase } from "@/lib/supabaseClient";
 
+const FUN_LOADING_MESSAGES = [
+  "Analyzing your image, please wait...",
+  "Sprinkling some AI magic dust ✨",
+  "Asking the pixels nicely to cooperate 🎨",
+  "Warming up the neural engines 🚀",
+  "Finding the perfect composition 🎯",
+  "Counting all the colors... 🌈",
+  "Brewing some creative ideas ☕️",
+  "Almost there, making it perfect 💫"
+];
+
 interface CanvasProps {
   shouldAutoUpload?: boolean;
   mode?:
@@ -56,6 +67,21 @@ export function Canvas({ shouldAutoUpload, mode = "full" }: CanvasProps) {
 
   // Add state for subscription status
   const [expiresAt, setExpiresAt] = useState<string | null>(null);
+  const [loadingMessageIndex, setLoadingMessageIndex] = useState(0);
+
+  // Add effect for rotating loading messages
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (isProcessing && processingMessage === "Analyzing your image, please wait...") {
+      interval = setInterval(() => {
+        setLoadingMessageIndex((prev) => (prev + 1) % FUN_LOADING_MESSAGES.length);
+      }, 2500);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+      setLoadingMessageIndex(0);
+    };
+  }, [isProcessing, processingMessage]);
 
   // Add effect to fetch subscription status
   useEffect(() => {
@@ -226,12 +252,17 @@ export function Canvas({ shouldAutoUpload, mode = "full" }: CanvasProps) {
 
   const getLoadingMessage = () => {
     if (isProcessing) {
+      const isStandardAnalysis = processingMessage === "Analyzing your image, please wait...";
+      const displayMessage = isStandardAnalysis 
+        ? FUN_LOADING_MESSAGES[loadingMessageIndex] 
+        : (processingMessage || FUN_LOADING_MESSAGES[loadingMessageIndex]);
+
       if (!user || !expiresAt || !isSubscriptionActive(expiresAt)) {
         return (
           <div className="flex flex-col items-center gap-3">
-            <div className="flex items-center gap-2">
-              <p className="text-white text-sm font-bold">
-                {processingMessage || "Analyzing with Basic AI ✨"}
+            <div className="flex items-center gap-2 overflow-hidden h-6">
+              <p key={displayMessage} className="text-white text-sm font-bold animate-in fade-in slide-in-from-bottom-2 duration-500">
+                {displayMessage}
               </p>
             </div>
             {/* <div className="flex flex-col items-center bg-white/10 backdrop-blur-sm rounded-lg px-4 py-2">
@@ -249,10 +280,10 @@ export function Canvas({ shouldAutoUpload, mode = "full" }: CanvasProps) {
         );
       }
       return (
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 overflow-hidden h-6">
           <span className="animate-pulse">✨</span>
-          <p className="text-white text-sm font-bold">
-            {processingMessage || "Processing with Premium AI ✨"}
+          <p key={displayMessage} className="text-white text-sm font-bold animate-in fade-in slide-in-from-bottom-2 duration-500">
+            {displayMessage}
           </p>
           <span className="animate-pulse">✨</span>
         </div>
@@ -297,6 +328,95 @@ export function Canvas({ shouldAutoUpload, mode = "full" }: CanvasProps) {
       }
     };
   }, []); // Empty dependency array - only run once on mount
+
+  // Add paste event listener for images and URLs
+  useEffect(() => {
+    const handlePaste = async (e: ClipboardEvent) => {
+      // Ignore paste if we're typing in an input or textarea
+      if (
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement ||
+        (e.target as HTMLElement).isContentEditable
+      ) {
+        return;
+      }
+
+      // 1. Try to get image from clipboard files (Cmd+V)
+      if (e.clipboardData?.files && e.clipboardData.files.length > 0) {
+        const file = e.clipboardData.files[0];
+        if (file.type.startsWith("image/")) {
+          e.preventDefault();
+          const validTypes = [
+            "image/jpeg",
+            "image/png",
+            "image/webp",
+            "image.webp",
+            "image/heic",
+            "image.heic",
+            "image/heif",
+            "image.heif",
+          ];
+          const fileType = file.type.toLowerCase();
+          const fileName = file.name.toLowerCase();
+
+          if (
+            fileType.includes("heic") ||
+            fileType.includes("heif") ||
+            fileName.endsWith(".heic") ||
+            fileName.endsWith(".heif")
+          ) {
+            setPendingFile(file);
+            setShowConvertDialog(true);
+          } else if (validTypes.includes(fileType)) {
+            await handleFileProcess(file);
+          } else {
+            toast({
+              variant: "destructive",
+              title: "Invalid file type",
+              description: "Please paste a valid image file (JPG, PNG, WEBP, HEIC, or HEIF)",
+            });
+          }
+          return;
+        }
+      }
+
+      // 2. Try to get URL from clipboard text
+      const pastedText = e.clipboardData?.getData("text");
+      if (pastedText && (pastedText.startsWith("http://") || pastedText.startsWith("https://"))) {
+        e.preventDefault();
+        try {
+          const url = new URL(pastedText);
+          setIsProcessing(true);
+          setProcessingMessage("Fetching image from link...");
+
+          // Try fetching the image
+          const response = await fetch(url.toString());
+          if (!response.ok) throw new Error("Failed to fetch image");
+
+          const blob = await response.blob();
+          if (!blob.type.startsWith("image/")) {
+            throw new Error("URL does not point to an image");
+          }
+
+          // Generate a filename based on the URL or default to pasted-image.jpg
+          const ext = blob.type.split("/")[1] || "jpg";
+          const file = new File([blob], `pasted-image.${ext}`, { type: blob.type });
+          await handleFileProcess(file);
+        } catch (error) {
+          toast({
+            variant: "destructive",
+            title: "Error loading image from URL",
+            description: "The link might be invalid, or it blocks access (CORS). Try downloading the image and pasting it instead.",
+          });
+          setIsProcessing(false);
+          setProcessingMessage("");
+        }
+      }
+    };
+
+    window.addEventListener("paste", handlePaste);
+    return () => window.removeEventListener("paste", handlePaste);
+  }, [image.original, isProcessing, isConverting, user]); // Re-bind when state changes to avoid stale closures
 
   useEffect(() => {
     // Cleanup function for file input and auto-upload state
@@ -404,10 +524,10 @@ export function Canvas({ shouldAutoUpload, mode = "full" }: CanvasProps) {
                   </div>
                   <div className="space-y-2">
                     <p className="text-gray-600 font-medium dark:text-gray-400">
-                      Click here or drag & drop to upload
+                      Click here, drag & drop, or paste (Cmd+V) to upload
                     </p>
                     <p className="text-gray-600 text-sm dark:text-gray-400">
-                      Supports: JPG, PNG, WEBP, HEIC, HEIF
+                      Supports: JPG, PNG, WEBP, HEIC, HEIF, or Image URL
                     </p>
                   </div>
                 </div>

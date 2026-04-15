@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
 import { DrawingPoint } from '@/types/editor';  // Add this import
+import { InteractiveTextOverlay } from './InteractiveTextOverlay';
 
 export function CanvasPreview() {
   const { 
@@ -30,11 +31,27 @@ export function CanvasPreview() {
     addDrawingPath,
     foregroundOutline
   } = useEditor();
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const bgCanvasRef = useRef<HTMLCanvasElement>(null);
+  const fgCanvasRef = useRef<HTMLCanvasElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [canvasRect, setCanvasRect] = useState<DOMRect | null>(null);
+  const [canvasScale, setCanvasScale] = useState(1);
+  const [canvasOriginalSize, setCanvasOriginalSize] = useState({ width: 100, height: 100 });
+  const [fgImageSize, setFgImageSize] = useState({ width: 100, height: 100 });
+
   const bgImageRef = useRef<HTMLImageElement | null>(null);
   const fgImageRef = useRef<HTMLImageElement | null>(null);
   const bgImagesRef = useRef<Map<number, HTMLImageElement>>(new Map()); // Add this line
+  const tempCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const renderRequestRef = useRef<number | undefined>(undefined);
+
+  // Initialize a reusable temp canvas
+  useEffect(() => {
+    tempCanvasRef.current = document.createElement('canvas');
+    return () => {
+      tempCanvasRef.current = null;
+    };
+  }, []);
   const { toast } = useToast();
   const { user } = useAuth();
 
@@ -87,10 +104,52 @@ export function CanvasPreview() {
     );
   }, []);
 
+  // Update canvas rect when canvas size changes
+  useEffect(() => {
+    const updateRect = () => {
+      if (bgCanvasRef.current) {
+        const rect = bgCanvasRef.current.getBoundingClientRect();
+        
+        // Update scale based on actual image dimensions vs displayed dimensions
+        if (bgImageRef.current) {
+          setCanvasScale(rect.width / bgImageRef.current.width);
+        }
+
+        // Only update if dimensions actually changed to avoid infinite loops
+        setCanvasRect(prev => {
+          if (!prev || prev.width !== rect.width || prev.height !== rect.height || prev.left !== rect.left || prev.top !== rect.top) {
+            return rect;
+          }
+          return prev;
+        });
+      }
+    };
+
+    updateRect();
+    
+    // Use ResizeObserver for more reliable canvas resize detection
+    const observer = new ResizeObserver(() => {
+      updateRect();
+    });
+    
+    if (bgCanvasRef.current) {
+      observer.observe(bgCanvasRef.current);
+    }
+    
+    window.addEventListener('resize', updateRect);
+    return () => {
+      window.removeEventListener('resize', updateRect);
+      observer.disconnect();
+    };
+  }, [foregroundSize, foregroundPosition, image, hasTransparentBackground, hasChangedBackground, isDrawingMode]);
+
   const render = useCallback(() => {
-    const canvas = canvasRef.current;
-    const ctx = canvas?.getContext('2d', { alpha: true });
-    if (!canvas || !ctx || !bgImageRef.current) return;
+    const bgCanvas = bgCanvasRef.current;
+    const fgCanvas = fgCanvasRef.current;
+    const bgCtx = bgCanvas?.getContext('2d', { alpha: true });
+    const fgCtx = fgCanvas?.getContext('2d', { alpha: true });
+    
+    if (!bgCanvas || !fgCanvas || !bgCtx || !fgCtx || !bgImageRef.current) return;
 
     // Cancel any pending render
     if (renderRequestRef.current) {
@@ -100,31 +159,48 @@ export function CanvasPreview() {
     // Schedule next render with high priority
     renderRequestRef.current = requestAnimationFrame(() => {
       // Reset canvas transform and clear
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      bgCtx.setTransform(1, 0, 0, 1, 0, 0);
+      bgCtx.clearRect(0, 0, bgCanvas.width, bgCanvas.height);
+      fgCtx.setTransform(1, 0, 0, 1, 0, 0);
+      fgCtx.clearRect(0, 0, fgCanvas.width, fgCanvas.height);
 
       // Set canvas size to match background image
-      canvas.width = bgImageRef.current!.width;
-      canvas.height = bgImageRef.current!.height;
+      bgCanvas.width = bgImageRef.current!.width;
+      bgCanvas.height = bgImageRef.current!.height;
+      fgCanvas.width = bgImageRef.current!.width;
+      fgCanvas.height = bgImageRef.current!.height;
+
+      // Update canvas rect for the text overlay after setting size
+      setCanvasRect(prev => {
+        const rect = bgCanvas.getBoundingClientRect();
+        if (bgImageRef.current) {
+          setCanvasScale(rect.width / bgImageRef.current.width);
+        }
+        if (!prev || prev.width !== rect.width || prev.height !== rect.height || prev.left !== rect.left || prev.top !== rect.top) {
+          return rect;
+        }
+        return prev;
+      });
 
       // Clear canvas with transparency
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      bgCtx.clearRect(0, 0, bgCanvas.width, bgCanvas.height);
+      fgCtx.clearRect(0, 0, fgCanvas.width, fgCanvas.height);
 
       // First, handle background color if set
       if (backgroundColor) {
-        ctx.fillStyle = backgroundColor;
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        bgCtx.fillStyle = backgroundColor;
+        bgCtx.fillRect(0, 0, bgCanvas.width, bgCanvas.height);
       } else if (hasTransparentBackground) {
-        const pattern = ctx.createPattern(createCheckerboardPattern(), 'repeat');
+        const pattern = bgCtx.createPattern(createCheckerboardPattern(), 'repeat');
         if (pattern) {
-          ctx.fillStyle = pattern;
-          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          bgCtx.fillStyle = pattern;
+          bgCtx.fillRect(0, 0, bgCanvas.width, bgCanvas.height);
         }
       } else if (image.background) {
         // Draw background image only if no color is set
-        ctx.filter = filterString;
-        ctx.drawImage(bgImageRef.current!, 0, 0);
-        ctx.filter = 'none';
+        bgCtx.filter = filterString;
+        bgCtx.drawImage(bgImageRef.current!, 0, 0);
+        bgCtx.filter = 'none';
       }
 
       // Draw background images
@@ -132,20 +208,27 @@ export function CanvasPreview() {
         const img = bgImagesRef.current.get(bgImage.id);
         if (!img) continue;
         
-        ctx.save();
+        bgCtx.save();
         
-        const x = (canvas.width * bgImage.position.horizontal) / 100;
-        const y = (canvas.height * bgImage.position.vertical) / 100;
+        const x = (bgCanvas.width * bgImage.position.horizontal) / 100;
+        const y = (bgCanvas.height * bgImage.position.vertical) / 100;
         
-        ctx.translate(x, y);
-        ctx.rotate((bgImage.rotation * Math.PI) / 180);
-        ctx.globalAlpha = bgImage.opacity;
+        bgCtx.translate(x, y);
+        bgCtx.rotate((bgImage.rotation * Math.PI) / 180);
+        
+        // Apply tilt
+        const tiltXRad = ((bgImage.tiltX || 0) * Math.PI) / 180;
+        const tiltYRad = ((bgImage.tiltY || 0) * Math.PI) / 180;
+        bgCtx.scale(Math.cos(tiltYRad), Math.cos(tiltXRad));
 
-        const baseSize = Math.min(canvas.width, canvas.height);
+        bgCtx.globalAlpha = bgImage.opacity;
+
+        const baseSize = Math.min(bgCanvas.width, bgCanvas.height);
         const scale = (baseSize * bgImage.scale) / 100;
 
-        // Create a temporary canvas for the image with effects
-        const tempCanvas = document.createElement('canvas');
+        // Use shared temporary canvas to avoid memory allocation in hot loop
+        const tempCanvas = tempCanvasRef.current;
+        if (!tempCanvas) continue;
         const tempCtx = tempCanvas.getContext('2d');
         if (!tempCtx) continue;
 
@@ -153,6 +236,7 @@ export function CanvasPreview() {
         const padding = bgImage.glow.intensity * 2;
         tempCanvas.width = scale + padding * 2;
         tempCanvas.height = scale + padding * 2;
+        tempCtx.clearRect(0, 0, tempCanvas.width, tempCanvas.height);
 
         // First draw the image
         tempCtx.drawImage(
@@ -166,27 +250,12 @@ export function CanvasPreview() {
         // Apply rounded corners if needed
         if (bgImage.borderRadius > 0) {
           const radius = (bgImage.borderRadius / 100) * (scale / 2);
-          // Create another temp canvas for the rounded shape
-          const roundedCanvas = document.createElement('canvas');
-          roundedCanvas.width = tempCanvas.width;
-          roundedCanvas.height = tempCanvas.height;
-          const roundedCtx = roundedCanvas.getContext('2d');
-          if (!roundedCtx) continue;
-
-          roundRect(
-            roundedCtx,
-            padding,
-            padding,
-            scale,
-            scale,
-            radius
-          );
-          roundedCtx.clip();
-          roundedCtx.drawImage(tempCanvas, 0, 0);
           
-          // Copy back to main temp canvas
-          tempCtx.clearRect(0, 0, tempCanvas.width, tempCanvas.height);
-          tempCtx.drawImage(roundedCanvas, 0, 0);
+          tempCtx.globalCompositeOperation = 'destination-in';
+          tempCtx.beginPath();
+          roundRect(tempCtx, padding, padding, scale, scale, radius);
+          tempCtx.fill();
+          tempCtx.globalCompositeOperation = 'source-over';
         }
 
         // Apply glow if intensity > 0
@@ -196,19 +265,12 @@ export function CanvasPreview() {
           tempCtx.shadowOffsetX = 0;
           tempCtx.shadowOffsetY = 0;
           
-          // Create another temp canvas to apply glow
-          const glowCanvas = document.createElement('canvas');
-          glowCanvas.width = tempCanvas.width;
-          glowCanvas.height = tempCanvas.height;
-          const glowCtx = glowCanvas.getContext('2d');
-          if (!glowCtx) continue;
-          
-          glowCtx.drawImage(tempCanvas, 0, 0);
-          tempCtx.drawImage(glowCanvas, 0, 0);
+          // Draw it over itself to apply the shadow (simple way without extra canvases)
+          tempCtx.drawImage(tempCanvas, 0, 0);
         }
 
         // Draw the temp canvas onto the main canvas
-        ctx.drawImage(
+        bgCtx.drawImage(
           tempCanvas,
           -scale / 2 - padding,
           -scale / 2 - padding,
@@ -216,51 +278,56 @@ export function CanvasPreview() {
           scale + padding * 2
         );
         
-        ctx.restore();
+        bgCtx.restore();
       }
 
       // Draw drawings right after background but before shapes and text
       drawings.forEach(path => {
-        drawPath(ctx, path.points);
+        drawPath(bgCtx, path.points);
       });
 
       // Draw current path (active drawing)
       if (currentPath.length > 0) {
-        drawPath(ctx, currentPath);
+        drawPath(bgCtx, currentPath);
       }
 
       // Draw shapes with consistent scaling
       shapeSets.forEach(shapeSet => {
-        ctx.save();
+        bgCtx.save();
         
-        const x = (canvas.width * shapeSet.position.horizontal) / 100;
-        const y = (canvas.height * shapeSet.position.vertical) / 100;
+        const x = (bgCanvas.width * shapeSet.position.horizontal) / 100;
+        const y = (bgCanvas.height * shapeSet.position.vertical) / 100;
         
         // Move to position
-        ctx.translate(x, y);
+        bgCtx.translate(x, y);
         
         // Apply rotation
-        ctx.rotate((shapeSet.rotation * Math.PI) / 180);
+        bgCtx.rotate((shapeSet.rotation * Math.PI) / 180);
+
+        // Apply tilt
+        const tiltXRad = ((shapeSet.tiltX || 0) * Math.PI) / 180;
+        const tiltYRad = ((shapeSet.tiltY || 0) * Math.PI) / 180;
+        bgCtx.scale(Math.cos(tiltYRad), Math.cos(tiltXRad));
 
         // Calculate scale
-        const baseSize = Math.min(canvas.width, canvas.height);
+        const baseSize = Math.min(bgCanvas.width, bgCanvas.height);
         const scale = (baseSize * (shapeSet.scale / 100)) / 1000;
         
         // Move to center, scale, then move back
-        ctx.translate(-0.5, -0.5);  // Move to center of shape path
-        ctx.scale(scale, scale);    // Apply scaling
-        ctx.translate(0.5, 0.5);    // Move back
+        bgCtx.translate(-0.5, -0.5);  // Move to center of shape path
+        bgCtx.scale(scale, scale);    // Apply scaling
+        bgCtx.translate(0.5, 0.5);    // Move back
 
         // Add glow effect if enabled
         if (shapeSet.glow?.enabled) {
-          ctx.shadowColor = shapeSet.glow.color;
-          ctx.shadowBlur = shapeSet.glow.intensity;
-          ctx.shadowOffsetX = 0;
-          ctx.shadowOffsetY = 0;
+          bgCtx.shadowColor = shapeSet.glow.color;
+          bgCtx.shadowBlur = shapeSet.glow.intensity;
+          bgCtx.shadowOffsetX = 0;
+          bgCtx.shadowOffsetY = 0;
         }
 
         // Set opacity
-        ctx.globalAlpha = shapeSet.opacity;
+        bgCtx.globalAlpha = shapeSet.opacity;
 
         // Find shape path and draw
         const shape = SHAPES.find(s => s.value === shapeSet.type);
@@ -268,141 +335,103 @@ export function CanvasPreview() {
           const path = new Path2D(shape.path);
           
           if (shapeSet.isFilled) {
-            ctx.fillStyle = shapeSet.color;
-            ctx.fill(path);
+            bgCtx.fillStyle = shapeSet.color;
+            bgCtx.fill(path);
           } else {
-            ctx.strokeStyle = shapeSet.color;
-            ctx.lineWidth = shapeSet.strokeWidth || 2;
-            ctx.stroke(path);
+            bgCtx.strokeStyle = shapeSet.color;
+            bgCtx.lineWidth = shapeSet.strokeWidth || 2;
+            bgCtx.stroke(path);
           }
         }
         
-        ctx.restore();
+        bgCtx.restore();
       });
 
-      // Draw text layers with font family and weight
-      textSets.forEach(textSet => {
-        ctx.save();
-        
-        try {
-          // Create proper font string
-          const fontString = `${textSet.fontWeight} ${textSet.fontSize}px "${textSet.fontFamily}"`;
-          
-          // Set the font
-          ctx.font = fontString;
-          ctx.fillStyle = textSet.color;
-          ctx.globalAlpha = textSet.opacity;
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-  
-          const x = (canvas.width * textSet.position.horizontal) / 100;
-          const y = (canvas.height * textSet.position.vertical) / 100;
-  
-          ctx.translate(x, y);
-          ctx.rotate((textSet.rotation * Math.PI) / 180);
-  
-          // Add glow effect if enabled
-          if (textSet.glow?.enabled && textSet.glow.color && textSet.glow.intensity > 0) {
-            ctx.shadowColor = textSet.glow.color;
-            ctx.shadowBlur = textSet.glow.intensity;
-            ctx.shadowOffsetX = 0;
-            ctx.shadowOffsetY = 0;
-          }
-  
-          ctx.fillText(textSet.text, 0, 0);
-        } catch (error) {
-          toast({variant:'destructive', title: "Something went wrong. Please try again."});
-          console.warn(`Failed to render text: ${textSet.text}`, error);
-        } finally {
-          ctx.restore();
-        }
-      });
-
-      // Draw original foreground
+      // Draw original foreground on fgCanvas
       if (fgImageRef.current) {
-        ctx.filter = 'none';
-        ctx.globalAlpha = 1;
+        fgCtx.filter = 'none';
+        fgCtx.globalAlpha = 1;
 
         const scale = Math.min(
-          canvas.width / fgImageRef.current.width,
-          canvas.height / fgImageRef.current.height
+          fgCanvas.width / fgImageRef.current.width,
+          fgCanvas.height / fgImageRef.current.height
         );
         
         const sizeMultiplier = foregroundSize / 100;
         const newWidth = fgImageRef.current.width * scale * sizeMultiplier;
         const newHeight = fgImageRef.current.height * scale * sizeMultiplier;
         
-        const x = (canvas.width - newWidth) / 2;
-        const y = (canvas.height - newHeight) / 2;
+        const x = (fgCanvas.width - newWidth) / 2;
+        const y = (fgCanvas.height - newHeight) / 2;
 
         const outlineEnabled = foregroundOutline.enabled && foregroundOutline.width > 0;
         const outlineColor = outlineEnabled ? resolveOutlineColor(foregroundOutline) : '';
 
         if (hasTransparentBackground || hasChangedBackground) {
-          const offsetX = (canvas.width * foregroundPosition.x) / 100;
-          const offsetY = (canvas.height * foregroundPosition.y) / 100;
+          const offsetX = (fgCanvas.width * foregroundPosition.x) / 100;
+          const offsetY = (fgCanvas.height * foregroundPosition.y) / 100;
           // 先画描边（在主体背后），再画主体
           if (outlineEnabled) {
-            ctx.save();
-            ctx.filter = buildOutlineFilter(foregroundOutline.width, outlineColor);
-            ctx.drawImage(fgImageRef.current, x + offsetX, y + offsetY, newWidth, newHeight);
-            ctx.restore();
+            fgCtx.save();
+            fgCtx.filter = buildOutlineFilter(foregroundOutline.width, outlineColor);
+            fgCtx.drawImage(fgImageRef.current, x + offsetX, y + offsetY, newWidth, newHeight);
+            fgCtx.restore();
           }
-          ctx.drawImage(fgImageRef.current, x + offsetX, y + offsetY, newWidth, newHeight);
+          fgCtx.drawImage(fgImageRef.current, x + offsetX, y + offsetY, newWidth, newHeight);
         } else {
           if (outlineEnabled) {
-            ctx.save();
-            ctx.filter = buildOutlineFilter(foregroundOutline.width, outlineColor);
-            ctx.drawImage(fgImageRef.current, x, y, newWidth, newHeight);
-            ctx.restore();
+            fgCtx.save();
+            fgCtx.filter = buildOutlineFilter(foregroundOutline.width, outlineColor);
+            fgCtx.drawImage(fgImageRef.current, x, y, newWidth, newHeight);
+            fgCtx.restore();
           }
-          ctx.drawImage(fgImageRef.current, x, y, newWidth, newHeight);
+          fgCtx.drawImage(fgImageRef.current, x, y, newWidth, newHeight);
         }
 
         // Draw cloned foregrounds
         clonedForegrounds.forEach(clone => {
           const scale = Math.min(
-            canvas.width / fgImageRef.current!.width,
-            canvas.height / fgImageRef.current!.height
+            fgCanvas.width / fgImageRef.current!.width,
+            fgCanvas.height / fgImageRef.current!.height
           );
           
           const newWidth = fgImageRef.current!.width * scale * (clone.size / 100);
           const newHeight = fgImageRef.current!.height * scale * (clone.size / 100);
           
-          const x = (canvas.width - newWidth) / 2;
-          const y = (canvas.height - newHeight) / 2;
+          const x = (fgCanvas.width - newWidth) / 2;
+          const y = (fgCanvas.height - newHeight) / 2;
           
-          const offsetX = (canvas.width * clone.position.x) / 100;
-          const offsetY = (canvas.height * clone.position.y) / 100;
+          const offsetX = (fgCanvas.width * clone.position.x) / 100;
+          const offsetY = (fgCanvas.height * clone.position.y) / 100;
 
           // Save context state before transformations
-          ctx.save();
+          fgCtx.save();
 
           // Move to center point
-          ctx.translate(x + offsetX + newWidth / 2, y + offsetY + newHeight / 2);
+          fgCtx.translate(x + offsetX + newWidth / 2, y + offsetY + newHeight / 2);
           
           // Apply rotation
-          ctx.rotate((clone.rotation * Math.PI) / 180);
+          fgCtx.rotate((clone.rotation * Math.PI) / 180);
           
           // Apply flips if needed
-          if (clone.flip.horizontal) ctx.scale(-1, 1);
-          if (clone.flip.vertical) ctx.scale(1, -1);
+          if (clone.flip.horizontal) fgCtx.scale(-1, 1);
+          if (clone.flip.vertical) fgCtx.scale(1, -1);
           
           // 先画克隆描边（在主体背后），再画克隆主体
           if (outlineEnabled) {
-            ctx.save();
-            ctx.filter = buildOutlineFilter(foregroundOutline.width, outlineColor);
-            ctx.drawImage(
+            fgCtx.save();
+            fgCtx.filter = buildOutlineFilter(foregroundOutline.width, outlineColor);
+            fgCtx.drawImage(
               fgImageRef.current!,
               -newWidth / 2,
               -newHeight / 2,
               newWidth,
               newHeight
             );
-            ctx.restore();
+            fgCtx.restore();
           }
 
-          ctx.drawImage(
+          fgCtx.drawImage(
             fgImageRef.current!, 
             -newWidth / 2, 
             -newHeight / 2, 
@@ -411,7 +440,7 @@ export function CanvasPreview() {
           );
 
           // Restore context state
-          ctx.restore();
+          fgCtx.restore();
         });
       }
 
@@ -444,6 +473,7 @@ export function CanvasPreview() {
     img.src = hasTransparentBackground ? image.foreground! : image.background!;
     img.onload = () => {
       bgImageRef.current = img;
+      setCanvasOriginalSize({ width: img.width, height: img.height });
       render();
     };
 
@@ -453,6 +483,7 @@ export function CanvasPreview() {
       fgImg.src = image.foreground;
       fgImg.onload = () => {
         fgImageRef.current = fgImg;
+        setFgImageSize({ width: fgImg.width, height: fgImg.height });
         render();
       };
     } else {
@@ -521,7 +552,7 @@ export function CanvasPreview() {
   const handleDrawStart = (e: React.MouseEvent | React.TouchEvent) => {
     if (!isDrawingMode) return;
     
-    const canvas = canvasRef.current;
+    const canvas = bgCanvasRef.current;
     if (!canvas) return;
 
     setIsDrawing(true);
@@ -536,7 +567,7 @@ export function CanvasPreview() {
   const handleDrawMove = (e: React.MouseEvent | React.TouchEvent) => {
     if (!isDrawing || !isDrawingMode) return;
     
-    const canvas = canvasRef.current;
+    const canvas = bgCanvasRef.current;
     if (!canvas) return;
 
     const point = getCanvasPoint(e, canvas);
@@ -603,7 +634,7 @@ export function CanvasPreview() {
 
   // Add cursor indicator for drawing tools
   useEffect(() => {
-    const canvas = canvasRef.current;
+    const canvas = bgCanvasRef.current;
     if (!canvas) return;
 
     const updateCursor = (e: MouseEvent) => {
@@ -627,15 +658,27 @@ export function CanvasPreview() {
     return () => canvas.removeEventListener('mousemove', updateCursor);
   }, [isDrawingMode, drawingSize, drawingColor]);
 
+  const fgBaseSize = useMemo(() => {
+    const fgScale = Math.min(
+      canvasOriginalSize.width / (fgImageSize.width || 1),
+      canvasOriginalSize.height / (fgImageSize.height || 1)
+    );
+    return {
+      width: fgImageSize.width * fgScale,
+      height: fgImageSize.height * fgScale
+    };
+  }, [canvasOriginalSize, fgImageSize]);
+
   return (
     <div className="relative w-full h-full flex items-center justify-center">
-      <div className="absolute inset-0 flex items-center justify-center">
+      <div className="absolute inset-0 flex items-center justify-center" ref={containerRef}>
         <canvas
-          ref={canvasRef}
+          ref={bgCanvasRef}
           className={cn(
-            "max-w-full max-h-full object-contain rounded-xl",
+            "max-w-full max-h-full object-contain rounded-xl absolute inset-0 m-auto z-10",
             isDrawingMode && "cursor-crosshair"
           )}
+          style={{ pointerEvents: 'auto' }}
           onMouseDown={handleDrawStart}
           onMouseMove={handleDrawMove}
           onMouseUp={handleDrawEnd}
@@ -643,6 +686,20 @@ export function CanvasPreview() {
           onTouchStart={handleDrawStart}
           onTouchMove={handleDrawMove}
           onTouchEnd={handleDrawEnd}
+        />
+        
+        {/* Interactive Text Overlay */}
+        <div className="absolute inset-0 m-auto z-20 pointer-events-none" style={{ width: canvasRect?.width, height: canvasRect?.height }}>
+          <InteractiveTextOverlay 
+            canvasRect={canvasRect} 
+            scale={canvasScale}
+            fgBaseSize={fgBaseSize}
+          />
+        </div>
+
+        <canvas
+          ref={fgCanvasRef}
+          className="max-w-full max-h-full object-contain rounded-xl absolute inset-0 m-auto pointer-events-none z-30"
         />
       </div>
     </div>

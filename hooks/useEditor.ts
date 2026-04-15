@@ -24,6 +24,8 @@ interface TextSet {
   position: { vertical: number; horizontal: number };
   opacity: number;
   rotation: number;
+  tiltX?: number;
+  tiltY?: number;
   glow?: GlowEffect;
 }
 
@@ -36,6 +38,8 @@ interface ShapeSet {
   scale: number;
   opacity: number;
   rotation: number;
+  tiltX?: number;
+  tiltY?: number;
   strokeWidth: number;
   glow?: GlowEffect;
 }
@@ -59,6 +63,8 @@ interface ClonedForeground {
   };
   size: number;
   rotation: number;
+  tiltX?: number;
+  tiltY?: number;
   flip: {
     horizontal: boolean;
     vertical: boolean;
@@ -73,6 +79,8 @@ interface BackgroundImage {
   scale: number;
   opacity: number;
   rotation: number;
+  tiltX?: number;
+  tiltY?: number;
   glow: {
     intensity: number;  // Remove enabled and color, only keep intensity
   };
@@ -175,7 +183,7 @@ interface EditorActions {
   addClonedForeground: () => void;
   removeClonedForeground: (id: number) => void;
   updateClonedForegroundPosition: (id: number, position: { x: number; y: number }) => void;
-  updateClonedForegroundTransform: (id: number, updates: Partial<{ position: { x: number; y: number }; size: number; rotation: number; flip: { horizontal: boolean; vertical: boolean } }>) => void;
+  updateClonedForegroundTransform: (id: number, updates: Partial<{ position: { x: number; y: number }; size: number; rotation: number; tiltX: number; tiltY: number; flip: { horizontal: boolean; vertical: boolean } }>) => void;
   setIsProcessing: (value: boolean) => void;
   setIsConverting: (value: boolean) => void;
   addBackgroundImage: (file: File, originalSize?: { width: number; height: number } | null, id?: number) => Promise<void>;
@@ -414,22 +422,33 @@ export const useEditor = create<EditorState & EditorActions>()((set, get) => ({
 
   setProcessingMessage: (message) => set({ processingMessage: message }),
 
-  addTextSet: () => set((state) => ({
-    textSets: [...state.textSets, {
-      id: Date.now(),
-      text: 'new text',
-      fontFamily: 'Inter',
-      fontWeight: '700',
-      fontSize: 600,
-      color: '#FFFFFF',
-      position: { 
-        vertical: 50, 
-        horizontal: 50 
-      },
-      opacity: 1,
-      rotation: 0
-    }]
-  })),
+  addTextSet: () => {
+    const canvasWidth = get().image.foreground 
+      ? new Promise<number>((resolve) => {
+          const img = new Image();
+          img.onload = () => resolve(img.width);
+          img.src = get().image.foreground!;
+        })
+      : Promise.resolve(600);
+
+    canvasWidth.then(width => {
+      set((state) => ({
+        textSets: [...state.textSets, {
+          id: Date.now(),
+          text: 'new text',
+          fontFamily: 'Inter',
+          fontWeight: '700',
+          fontSize: Math.round(width / 4), // Default to 25% of image width (more reasonable than full width)
+          color: '#FFFFFF',
+          opacity: 1,
+          position: { horizontal: 50, vertical: 50 },
+          rotation: 0,
+          tiltX: 0,
+          tiltY: 0
+        }]
+      }));
+    });
+  },
 
   updateTextSet: async (id, updates) => {
     const state = get();
@@ -505,7 +524,9 @@ export const useEditor = create<EditorState & EditorActions>()((set, get) => ({
       position: { vertical: 50, horizontal: 50 },
       scale: 500, // Changed initial scale to be 50
       opacity: 1,
-      rotation: 0
+      rotation: 0,
+      tiltX: 0,
+      tiltY: 0
     }]
   })),
 
@@ -721,12 +742,16 @@ export const useEditor = create<EditorState & EditorActions>()((set, get) => ({
         
         ctx.translate(x, y);
         ctx.rotate((bgImage.rotation * Math.PI) / 180);
+        const tiltXRad = ((bgImage.tiltX || 0) * Math.PI) / 180;
+        const tiltYRad = ((bgImage.tiltY || 0) * Math.PI) / 180;
+        ctx.scale(Math.cos(tiltYRad), Math.cos(tiltXRad));
+
         ctx.globalAlpha = bgImage.opacity;
 
         const baseSize = Math.min(canvas.width, canvas.height);
         const scale = (baseSize * bgImage.scale) / 100;
 
-        // Create a temporary canvas for effects
+        // Use shared temporary canvas to avoid memory allocation in hot loop
         const tempCanvas = document.createElement('canvas');
         const tempCtx = tempCanvas.getContext('2d');
         if (!tempCtx) continue;
@@ -748,27 +773,11 @@ export const useEditor = create<EditorState & EditorActions>()((set, get) => ({
         // Apply rounded corners if needed
         if (bgImage.borderRadius > 0) {
           const radius = (bgImage.borderRadius / 100) * (scale / 2);
-          // Create another temp canvas for the rounded shape
-          const roundedCanvas = document.createElement('canvas');
-          roundedCanvas.width = tempCanvas.width;
-          roundedCanvas.height = tempCanvas.height;
-          const roundedCtx = roundedCanvas.getContext('2d');
-          if (!roundedCtx) continue;
-
-          roundRect(
-            roundedCtx,
-            padding,
-            padding,
-            scale,
-            scale,
-            radius
-          );
-          roundedCtx.clip();
-          roundedCtx.drawImage(tempCanvas, 0, 0);
-          
-          // Copy back to main temp canvas
-          tempCtx.clearRect(0, 0, tempCanvas.width, tempCanvas.height);
-          tempCtx.drawImage(roundedCanvas, 0, 0);
+          tempCtx.globalCompositeOperation = 'destination-in';
+          tempCtx.beginPath();
+          roundRect(tempCtx, padding, padding, scale, scale, radius);
+          tempCtx.fill();
+          tempCtx.globalCompositeOperation = 'source-over';
         }
 
         // Apply glow if intensity > 0
@@ -778,15 +787,19 @@ export const useEditor = create<EditorState & EditorActions>()((set, get) => ({
           tempCtx.shadowOffsetX = 0;
           tempCtx.shadowOffsetY = 0;
           
-          // Create another temp canvas to apply glow
-          const glowCanvas = document.createElement('canvas');
-          glowCanvas.width = tempCanvas.width;
-          glowCanvas.height = tempCanvas.height;
-          const glowCtx = glowCanvas.getContext('2d');
-          if (!glowCtx) continue;
+          // Draw it over itself to apply the shadow
+          tempCtx.drawImage(tempCanvas, 0, 0);
+        }
+
+        // Apply glow if intensity > 0
+        if (bgImage.glow.intensity > 0) {
+          tempCtx.shadowColor = '#ffffff'; // Always white glow
+          tempCtx.shadowBlur = bgImage.glow.intensity;
+          tempCtx.shadowOffsetX = 0;
+          tempCtx.shadowOffsetY = 0;
           
-          glowCtx.drawImage(tempCanvas, 0, 0);
-          tempCtx.drawImage(glowCanvas, 0, 0);
+          // Draw it over itself to apply the shadow
+          tempCtx.drawImage(tempCanvas, 0, 0);
         }
 
         // Draw the temp canvas onto the main canvas
@@ -840,6 +853,9 @@ export const useEditor = create<EditorState & EditorActions>()((set, get) => ({
         
         ctx.translate(x, y);
         ctx.rotate((shapeSet.rotation * Math.PI) / 180);
+        const tiltXRad = ((shapeSet.tiltX || 0) * Math.PI) / 180;
+        const tiltYRad = ((shapeSet.tiltY || 0) * Math.PI) / 180;
+        ctx.scale(Math.cos(tiltYRad), Math.cos(tiltXRad));
 
         const baseSize = Math.min(canvas.width, canvas.height);
         const scale = (baseSize * (shapeSet.scale / 100)) / 1000;
@@ -889,6 +905,11 @@ export const useEditor = create<EditorState & EditorActions>()((set, get) => ({
 
         ctx.translate(x, y);
         ctx.rotate((textSet.rotation * Math.PI) / 180);
+
+        // Approximate 3D tilt with 2D scale
+        const tiltXRad = ((textSet.tiltX || 0) * Math.PI) / 180;
+        const tiltYRad = ((textSet.tiltY || 0) * Math.PI) / 180;
+        ctx.scale(Math.cos(tiltYRad), Math.cos(tiltXRad));
 
         if (textSet.glow?.enabled) {
           ctx.shadowColor = textSet.glow.color;
@@ -969,6 +990,11 @@ export const useEditor = create<EditorState & EditorActions>()((set, get) => ({
           
           // Rotate around the center
           ctx.rotate((clone.rotation * Math.PI) / 180);
+
+          // Apply tilt
+          const tiltXRad = ((clone.tiltX || 0) * Math.PI) / 180;
+          const tiltYRad = ((clone.tiltY || 0) * Math.PI) / 180;
+          ctx.scale(Math.cos(tiltYRad), Math.cos(tiltXRad));
           
           // Apply flip transformations
           ctx.scale(clone.flip.horizontal ? -1 : 1, clone.flip.vertical ? -1 : 1);
@@ -1199,6 +1225,8 @@ export const useEditor = create<EditorState & EditorActions>()((set, get) => ({
           position: { x: 5, y: 0 },
           size: 100,
           rotation: 0,
+          tiltX: 0,
+          tiltY: 0,
           flip: {
             horizontal: false,
             vertical: false
@@ -1256,6 +1284,8 @@ export const useEditor = create<EditorState & EditorActions>()((set, get) => ({
             scale: initialScale,
             opacity: 1,
             rotation: 0,
+            tiltX: 0,
+            tiltY: 0,
             glow: {
               intensity: 0  // Simplified glow object
             },

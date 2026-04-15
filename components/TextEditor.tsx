@@ -208,12 +208,10 @@ export function TextEditor() {
           {/* Position Controls */}
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label asChild>
-                <div className="flex justify-between items-center text-sm text-gray-600 dark:text-gray-400">
-                  Horizontal Position
-                  <span>{textSet.position.horizontal}%</span>
-                </div>
-              </Label>
+              <div className="flex justify-between items-center text-sm font-medium">
+                <label>Horizontal Position</label>
+                <span className="text-gray-600 dark:text-gray-400">{Math.round(textSet.position.horizontal)}%</span>
+              </div>
               <Slider
                 min={0}
                 max={100}
@@ -224,12 +222,10 @@ export function TextEditor() {
             </div>
 
             <div className="space-y-2">
-              <Label asChild>
-                <div className="flex justify-between items-center text-sm text-gray-600 dark:text-gray-400">
-                  Vertical Position
-                  <span>{textSet.position.vertical}%</span>
-                </div>
-              </Label>
+              <div className="flex justify-between items-center text-sm font-medium">
+                <label>Vertical Position</label>
+                <span className="text-gray-600 dark:text-gray-400">{Math.round(textSet.position.vertical)}%</span>
+              </div>
               <Slider
                 min={0}
                 max={100}
